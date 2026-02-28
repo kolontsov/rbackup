@@ -1,0 +1,97 @@
+encryption:
+  # Single recipient:
+  #   age_recipient: "age1..."
+  # Multi-recipient (any corresponding identity can decrypt):
+  age_recipient:
+    - "age1primarykey..."
+    - "age1recoverykey..."
+  # Only needed for restore/verify, not for backup-only hosts.
+  # identity_file: /etc/rbackup/identity.txt
+
+# Optional: sign backups with SSH host key for authenticity verification.
+# signing:
+#   # Path to SSH Ed25519 private key (used at backup time).
+#   # When set and no allowed_signers/allowed_signers_file is configured,
+#   # <host_key>.pub is auto-read as an allowed signer (single-host setups).
+#   host_key: /etc/ssh/ssh_host_ed25519_key
+#   # Inline Ed25519 public keys trusted for verification (restore/verify).
+#   allowed_signers:
+#     - "ssh-ed25519 AAAAC3..."
+#   # Or use a dedicated known_hosts-format file (wider trust surface —
+#   # any Ed25519 key in the file is trusted).
+#   allowed_signers_file: ~/.ssh/known_hosts
+
+settings:
+  # S3 key prefix for all backup objects.
+  namespace: host01
+  # Directory for advisory lock files.
+  lock_dir: /tmp/rbackup
+  # Temporary directory for encrypted spool files.
+  spool_dir: /var/tmp/rbackup
+  # Command execution timeout (default: 1h).
+  # cmd_timeout: 1h
+  # Per-attempt timeout for remote S3 operations (default: 30m).
+  # remote_timeout: 30m
+  # Extra retry attempts for remote S3 operations; total = retries + 1 (default: 2).
+  # remote_retries: 2
+  # Timeout for acquiring advisory lock; 0 = fail immediately (default: 0).
+  # lock_wait: 0
+  # Maximum ciphertext size per backup; 0 = unlimited (default: 0).
+  # max_backup_bytes: 0
+  # Fail if spool_dir free space is below threshold; 0 = disabled (default: 0).
+  # min_disk_free_bytes: 0
+
+remotes:
+  - name: s3-primary
+    type: s3
+    region: us-east-1
+    bucket: myorg-backups
+    # Exactly one credential mode per remote:
+    # - aws_profile
+    # - credential_source: default_chain
+    # - access_key_id + secret_access_key
+    aws_profile: backup-prod
+    # credential_source: default_chain
+
+  - name: b2-secondary
+    type: s3
+    bucket: myorg-backups
+    endpoint: "https://s3.us-west-004.backblazeb2.com"
+    access_key_id: "${B2_KEY}"
+    secret_access_key: "${B2_SECRET}"
+
+notifications:
+  # Webhook URLs for backup status notifications.
+  success_url: "${NTFY_BACKUP_OK_URL}"
+  failure_url: "${NTFY_BACKUP_FAIL_URL}"
+  # Custom HTTP headers for webhook requests.
+  # headers:
+  #   Authorization: "Bearer ${NTFY_TOKEN}"
+  # Per-attempt webhook timeout (default: 10s).
+  # webhook_timeout: 10s
+  # Extra retry attempts for webhooks; total = retries + 1 (default: 2).
+  # webhook_retries: 2
+
+defaults:
+  remotes: [s3-primary, b2-secondary]
+
+backups:
+  # Command source: runs via /bin/sh -c; stdout becomes backup payload.
+  postgres:
+    object_name: postgres.sql.gz
+    cmd: "pg_dumpall --clean | gzip"
+
+  # Directory source: archived as tar.gz before encryption; archive root is
+  # basename(dir), and symlinks are preserved.
+  nginx:
+    object_name: nginx-conf
+    dir: /etc/nginx
+
+  # File source with seal (double encryption: age + passphrase).
+  # manual_only entries are skipped by backup --all.
+  vault-export:
+    object_name: vault-export.json
+    file: /srv/exports/vault-export.json
+    seal: true
+    manual_only: true
+    remotes: [b2-secondary]

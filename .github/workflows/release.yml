@@ -1,0 +1,104 @@
+---
+name: Release
+
+'on':
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Integration tests
+        run: go test -tags integration -v -timeout 120s ./integration/...
+
+      - name: Set build vars
+        id: vars
+        run: |
+          {
+            echo "version=${GITHUB_REF_NAME}"
+            echo "commit=$(git rev-parse --short HEAD)"
+            echo "date=$(date -u +%Y-%m-%d)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build all targets
+        run: |
+          LDFLAGS="-s -w \
+            -X main.version=${{ steps.vars.outputs.version }} \
+            -X main.commit=${{ steps.vars.outputs.commit }} \
+            -X main.buildDate=${{ steps.vars.outputs.date }}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -ldflags "$LDFLAGS" -o rbackup-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+            go build -ldflags "$LDFLAGS" -o rbackup-linux-arm64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 \
+            go build -ldflags "$LDFLAGS" -o rbackup-darwin-amd64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+            go build -ldflags "$LDFLAGS" -o rbackup-darwin-arm64 .
+
+      - name: Generate checksums
+        run: |
+          sha256sum \
+            rbackup-linux-amd64 \
+            rbackup-linux-arm64 \
+            rbackup-darwin-amd64 \
+            rbackup-darwin-arm64 \
+            > SHA256SUMS
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign checksum manifest (keyless Sigstore)
+        run: |
+          cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+
+      - name: Verify checksum manifest signature in CI
+        run: |
+          oidc_issuer="https://token.actions.githubusercontent.com"
+          cert_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}"
+          cosign verify-blob \
+            --bundle SHA256SUMS.sigstore.json \
+            --certificate-identity "${cert_identity}" \
+            --certificate-oidc-issuer "${oidc_issuer}" \
+            SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            rbackup-linux-amd64
+            rbackup-linux-arm64
+            rbackup-darwin-amd64
+            rbackup-darwin-arm64
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            rbackup-linux-amd64
+            rbackup-linux-arm64
+            rbackup-darwin-amd64
+            rbackup-darwin-arm64
+            SHA256SUMS
+            SHA256SUMS.sigstore.json
+          generate_release_notes: true

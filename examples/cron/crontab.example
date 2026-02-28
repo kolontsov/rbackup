@@ -1,0 +1,16 @@
+# Example: /etc/cron.d/rbackup
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Config location
+RBACKUP_CONFIG=/etc/rbackup/config.yaml
+
+# Optional secrets (if config uses ${ENV_VAR} substitution)
+# B2_KEY=...
+# B2_SECRET=...
+# NTFY_BACKUP_OK_URL=...
+# NTFY_BACKUP_FAIL_URL=...
+
+# Daily backup at 03:30
+# Keep one JSON receipt file per run (avoid appending multiple JSON arrays into one file).
+30 3 * * * backup /usr/local/bin/rbackup backup --all >/var/log/rbackup/receipts-$(date +\%F-\%H\%M\%S).json 2>>/var/log/rbackup/rbackup.log

@@ -1,0 +1,79 @@
+# Recovery
+
+Backups in this bucket are encrypted with age (https://age-encryption.org).
+Recommended: generate/update this file with `rbackup recovery-txt --org {{.Org}}`.
+
+Source: https://github.com/kolontsov/rbackup
+Runbook: https://github.com/kolontsov/rbackup/blob/main/docs/runbook.md
+
+## Decrypt
+
+If you have the identity file (`AGE-SECRET-KEY-...`):
+
+`age -d -i identity.txt < backup.age > backup`
+
+## .age2 (Double-Encrypted)
+
+If the backup has a `.age2` extension, it has an additional passphrase layer:
+
+1. Outer layer (scrypt/passphrase):
+
+   `age -d < backup.age2 > backup.age`
+
+2. Inner layer (age recipient):
+
+   `age -d -i identity.txt < backup.age > backup`
+
+Use the identity type that matches the recipient (`age1...` or `age1pq...`).
+
+## If the Identity Was Derived (`derive-key`)
+
+If the identity file was generated with `rbackup derive-key` (deterministic
+derivation from passphrase + org), it can be re-derived manually. You need:
+
+- Passphrase: <REQUIRED>
+- Org: {{.Org}}
+
+Compute Argon2id with these parameters:
+
+- Salt: `rbackup-key-v1-{{.Org}}` (UTF-8 bytes)
+- Time: {{.ArgonTime}}
+- Memory: {{.ArgonMemory}} KB ({{.ArgonMemoryMB}} MB)
+- Parallel: {{.ArgonThreads}}
+- Hash len: {{.ArgonKeyLen}} bytes
+
+X25519: the 32-byte output is the raw age identity.
+Bech32-encode with HRP `age-secret-key-` and uppercase to get
+`AGE-SECRET-KEY-1...` format.
+
+ML-KEM-768/X25519 (`--pq`): the 32-byte output is the raw age PQ seed.
+Bech32-encode with HRP `age-secret-key-pq-` and uppercase to get
+`AGE-SECRET-KEY-PQ-1...` format.
+Key expansion is done by age v1.3+ and follows HPKE DeriveKeyPair for
+MLKEM768-X25519 (draft-ietf-hpke-pq).
+
+## Backup Signature Verification (Optional)
+
+If `x-rbackup-signature` metadata is present on the S3 object, the backup
+was signed with the host's SSH Ed25519 key.
+
+The signature is a base64-encoded raw Ed25519 signature (64 bytes) of the
+`x-rbackup-sha256` hex string (the ASCII hex characters, not binary hash bytes).
+You must compare the downloaded ciphertext SHA-256 to `x-rbackup-sha256`
+before trusting the signature result.
+
+Recommended: archive the public key(s) you trust
+(`ssh-ed25519 AAAA...`) or a dedicated `allowed_signers_file` copy alongside
+this document. Those files are what you use to verify signatures later.
+
+1. Get object metadata: `aws s3api head-object --bucket BUCKET --key KEY`
+2. Download the exact object/version you plan to decrypt
+3. Compute SHA-256 of the downloaded ciphertext and compare it to `x-rbackup-sha256`
+4. Extract `x-rbackup-signature` and base64-decode it (64 bytes raw Ed25519)
+5. Verify: ed25519.Verify(hostPublicKey, []byte(sha256Hex), signature)
+
+The signing key is typically `/etc/ssh/ssh_host_ed25519_key`.
+Prefer archived public keys or an archived `known_hosts` file over live lookup.
+If you did not archive them, an old `~/.ssh/known_hosts` entry may still be a
+useful hint, but it is weaker and not deterministic policy. Do not treat live
+`ssh-keyscan` output as something you trust during incident response.

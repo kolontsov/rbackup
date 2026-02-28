@@ -1,0 +1,24 @@
+[Unit]
+Description=rbackup backup --all
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=backup
+Group=backup
+EnvironmentFile=-/etc/rbackup/rbackup.env
+ExecStart=/usr/local/bin/rbackup --config /etc/rbackup/config.yaml backup --all
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+# Optional hardening (tune for your host)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/tmp/rbackup /tmp/rbackup
+
+[Install]
+WantedBy=multi-user.target
